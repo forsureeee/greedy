@@ -217,7 +217,7 @@ function Library:LoadFontFromBase64(Base64Str)
     local success, decoded = pcall(function()
         if syn and syn.crypt and syn.crypt.base64 then
             return syn.crypt.base64.decode(Base64Str)
-        elseif game:GetService('HttpService'):JSONDecode then
+        elseif game:GetService('HttpService').JSONDecode then
             -- No standard base64 decode in Roblox, need custom
             return nil
         end
