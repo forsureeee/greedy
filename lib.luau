@@ -33,7 +33,7 @@ local Library = {
     FontColor = Color3.fromRGB(255, 255, 255);
     MainColor = Color3.fromRGB(28, 28, 28);
     BackgroundColor = Color3.fromRGB(20, 20, 20);
-    AccentColor = Color3.fromRGB(0, 85, 255);
+    AccentColor = Color3.fromRGB(255, 105, 180);
     OutlineColor = Color3.fromRGB(50, 50, 50);
     RiskColor = Color3.fromRGB(255, 50, 50),
 
@@ -93,6 +93,69 @@ local function GetTeamsString()
     table.sort(TeamList, function(str1, str2) return str1 < str2 end);
 
     return TeamList;
+end;
+
+
+-- Smooth UI helpers added for the rounded fork.
+Library.Animation = {
+    Fast = TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+    Normal = TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+    Close = TweenInfo.new(0.12, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
+    Spring = TweenInfo.new(0.20, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+};
+
+Library.ActiveTweens = setmetatable({}, { __mode = 'k' });
+
+function Library:Tween(Inst, TweenInfoObj, Properties)
+    if not Inst then
+        return;
+    end;
+
+    local Running = Library.ActiveTweens[Inst];
+    if Running then
+        pcall(function()
+            Running:Cancel();
+        end);
+    end;
+
+    local Tween = TweenService:Create(Inst, TweenInfoObj or Library.Animation.Normal, Properties);
+    Library.ActiveTweens[Inst] = Tween;
+
+    Tween.Completed:Connect(function()
+        if Library.ActiveTweens[Inst] == Tween then
+            Library.ActiveTweens[Inst] = nil;
+        end;
+    end);
+
+    Tween:Play();
+    return Tween;
+end;
+
+function Library:ApplySoftStroke(Inst, ColorKey, Thickness, Transparency)
+    local Stroke = Library:Create('UIStroke', {
+        Color = Library[ColorKey or 'OutlineColor'] or Library.OutlineColor;
+        Thickness = Thickness or 1;
+        Transparency = Transparency or 0;
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border;
+        LineJoinMode = Enum.LineJoinMode.Round;
+        Parent = Inst;
+    });
+
+    Library:AddToRegistry(Stroke, {
+        Color = ColorKey or 'OutlineColor';
+    });
+
+    return Stroke;
+end;
+
+function Library:ApplyInnerPadding(Inst, Left, Right, Top, Bottom)
+    return Library:Create('UIPadding', {
+        PaddingLeft = UDim.new(0, Left or 0);
+        PaddingRight = UDim.new(0, Right or Left or 0);
+        PaddingTop = UDim.new(0, Top or 0);
+        PaddingBottom = UDim.new(0, Bottom or Top or 0);
+        Parent = Inst;
+    });
 end;
 
 function Library:SafeCallback(f, ...)
@@ -170,6 +233,7 @@ function Library:CreateLabel(Properties, IsHud)
         TextColor3 = Library.FontColor;
         TextSize = 16;
         TextStrokeTransparency = 0;
+        RichText = true;
     });
 
     Library:ApplyTextStroke(_Instance);
@@ -237,97 +301,39 @@ function Library:LoadFontFromBase64(Base64Str)
 end
 
 function Library:LoadCustomFont(Path)
-    -- Method 1: Load from file path (executors with file system)
-    local function tryLoadFromFile(filePath)
-        local fileExists = pcall(function()
-            local file = io.open(filePath, "rb")
-            if file then
-                file:close()
-                return true
-            end
-            return false
-        end)
-
-        if fileExists then
-            local f = io.open(filePath, "rb")
-            local data = f:read("*all")
-            f:close()
-
-            local success, decoded = pcall(function()
-                if syn and syn.font then
-                    local font = syn.font(data)
-                    return font
-                end
-                return nil
-            end)
-
-            if success and decoded then
-                return decoded
-            end
-        end
-        return nil
-    end
-
-    -- Method 2: Try loading via rbxassetid
-    local function tryLoadFromAssetId(assetId)
-        local success, font = pcall(Font.new, assetId)
-        if success then
-            return font
-        end
-        return nil
-    end
-
-    -- Method 3: Try reading with readfile (common executor function)
-    local function tryReadFile(filePath)
-        local success, data = pcall(readfile, filePath)
-        if success and data then
-            local success2, font = pcall(function()
-                if syn and syn.font then
-                    return syn.font(data)
-                end
-                return Font.new("rbxasset://fonts/families/SourceSansPro.json")
-            end)
-            if success2 then
-                return font
-            end
-        end
-        return nil
-    end
-
     local font = nil
 
-    if Path then
-        font = tryLoadFromFile(Path)
-        if not font then font = tryReadFile(Path) end
-    end
-
-    -- Method 4: Try loading from default paths
-    if not font then
-        font = tryLoadFromFile("Inter.ttf")
-    end
-
-    if not font then
-        font = tryLoadFromFile("font.ttf")
-    end
-
-    -- Method 5: Try asset IDs (user must upload Inter to Roblox first)
-    if not font then
-        font = tryLoadFromAssetId("rbxassetid://0") -- Placeholder
-    end
-
-    if font then
-        Library.CustomFont = font
-        -- Update all existing labels
+    local function applyFont(f)
+        Library.CustomFont = f
         for _, obj in next, Library.Registry do
             if obj.Instance:IsA("TextLabel") or obj.Instance:IsA("TextBox") or obj.Instance:IsA("TextButton") then
-                pcall(function()
-                    obj.Instance.FontFace = font
-                end)
+                pcall(function() obj.Instance.FontFace = f end)
             end
         end
         return true
     end
 
+    local function tryLoad(filePath)
+        local data = pcall(readfile, filePath) and readfile(filePath)
+        if not data then
+            local f = pcall(io.open, filePath, "rb") and io.open(filePath, "rb")
+            if f then data = f:read("*all"); f:close() end
+        end
+        if data then
+            local ok, result = pcall(function()
+                if syn and syn.font then
+                    return syn.font(data)
+                end
+            end)
+            if ok and result then return result end
+        end
+    end
+
+    if Path then font = tryLoad(Path) end
+    if not font then font = tryLoad("Inter.ttf") end
+    if not font then font = tryLoad("font.ttf") end
+
+    if font then return applyFont(font) end
     return false
 end
 
@@ -340,6 +346,22 @@ function Library:SetCustomFont(FontFace)
             end)
         end
     end
+end
+
+function Library:LoadFont(pathOrData)
+    if syn and syn.font then
+        local ok, f = pcall(syn.font, pathOrData)
+        if ok and f then
+            Library:SetCustomFont(f)
+            return true
+        end
+    end
+    local ok, f = pcall(Font.new, pathOrData)
+    if ok then
+        Library:SetCustomFont(f)
+        return true
+    end
+    return false
 end
 
 --[[
@@ -741,6 +763,7 @@ do
             Position = UDim2.new(0, 5, 0, 0);
             Size = UDim2.new(1, -5, 1, 0);
             Font = Library.Font;
+            RichText = true;
             PlaceholderColor3 = Color3.fromRGB(190, 190, 190);
             PlaceholderText = 'Hex color',
             Text = '#FFFFFF',
@@ -1874,6 +1897,7 @@ do
             Size = UDim2.fromScale(5, 1),
 
             Font = Library.Font;
+            RichText = true;
             PlaceholderColor3 = Color3.fromRGB(190, 190, 190);
             PlaceholderText = Info.Placeholder or '';
 
@@ -2051,8 +2075,10 @@ do
         end
 
         function Toggle:Display()
-            ToggleInner.BackgroundColor3 = Toggle.Value and Library.AccentColor or Library.MainColor;
-            ToggleInner.BorderColor3 = Toggle.Value and Library.AccentColorDark or Library.OutlineColor;
+            Library:Tween(ToggleInner, Library.Animation.Fast, {
+                BackgroundColor3 = Toggle.Value and Library.AccentColor or Library.MainColor,
+                BorderColor3 = Toggle.Value and Library.AccentColorDark or Library.OutlineColor,
+            });
 
             Library.RegistryMap[ToggleInner].Properties.BackgroundColor3 = Toggle.Value and 'AccentColor' or 'MainColor';
             Library.RegistryMap[ToggleInner].Properties.BorderColor3 = Toggle.Value and 'AccentColorDark' or 'OutlineColor';
@@ -2232,7 +2258,7 @@ do
             end
 
             local X = math.ceil(Library:MapValue(Slider.Value, Slider.Min, Slider.Max, 0, Slider.MaxSize));
-            Fill.Size = UDim2.new(0, X, 1, 0);
+            Library:Tween(Fill, Library.Animation.Fast, { Size = UDim2.new(0, X, 1, 0) });
 
             HideBorderRight.Visible = not (X == Slider.MaxSize or X == 0);
         end;
@@ -2428,7 +2454,9 @@ do
 
         local ListOuter = Library:Create('Frame', {
             BackgroundColor3 = Color3.new(0, 0, 0);
+            BackgroundTransparency = 1;
             BorderColor3 = Color3.new(0, 0, 0);
+            ClipsDescendants = true;
             ZIndex = 20;
             Visible = false;
             Parent = ScreenGui;
@@ -2475,8 +2503,9 @@ do
             TopImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png',
             BottomImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png',
 
-            ScrollBarThickness = 3,
+            ScrollBarThickness = 4,
             ScrollBarImageColor3 = Library.AccentColor,
+            ScrollBarImageTransparency = 0,
         });
 
         Library:AddToRegistry(Scrolling, {
@@ -2549,6 +2578,7 @@ do
                     Active = true,
                     Parent = Scrolling;
                 });
+                Library:ApplyRoundedCorners(Button, 3);
 
                 Library:AddToRegistry(Button, {
                     BackgroundColor3 = 'MainColor';
@@ -2566,10 +2596,15 @@ do
                     Parent = Button;
                 });
 
-                Library:OnHighlight(Button, Button,
-                    { BorderColor3 = 'AccentColor', ZIndex = 24 },
-                    { BorderColor3 = 'OutlineColor', ZIndex = 23 }
-                );
+                Button.MouseEnter:Connect(function()
+                    Button.ZIndex = 24;
+                    Library:Tween(Button, Library.Animation.Fast, { BorderColor3 = Library.AccentColor });
+                end);
+
+                Button.MouseLeave:Connect(function()
+                    Button.ZIndex = 23;
+                    Library:Tween(Button, Library.Animation.Fast, { BorderColor3 = Library.OutlineColor });
+                end);
 
                 local Selected;
 
@@ -2586,11 +2621,13 @@ do
                         Selected = Dropdown.Value == Value;
                     end;
 
-                    ButtonLabel.TextColor3 = Selected and Library.AccentColor or Library.FontColor;
+                    Library:Tween(ButtonLabel, Library.Animation.Fast, {
+                        TextColor3 = Selected and Library.AccentColor or Library.FontColor
+                    });
                     Library.RegistryMap[ButtonLabel].Properties.TextColor3 = Selected and 'AccentColor' or 'FontColor';
                 end;
 
-                ButtonLabel.InputBegan:Connect(function(Input)
+                Button.InputBegan:Connect(function(Input)
                     if Input.UserInputType == Enum.UserInputType.MouseButton1 then
                         local Try = not Selected;
 
@@ -2625,6 +2662,10 @@ do
                             Library:SafeCallback(Dropdown.Changed, Dropdown.Value);
 
                             Library:AttemptSave();
+
+                            if not Info.Multi then
+                                Dropdown:CloseDropdown();
+                            end;
                         end;
                     end;
                 end);
@@ -2650,15 +2691,49 @@ do
         end;
 
         function Dropdown:OpenDropdown()
+            RecalculateListPosition();
+
+            local targetY = math.clamp(#Dropdown.Values * 20, 0, MAX_DROPDOWN_ITEMS * 20) + 1;
             ListOuter.Visible = true;
+            ListOuter.ClipsDescendants = true;
+            ListOuter.Size = UDim2.fromOffset(DropdownOuter.AbsoluteSize.X, 0);
+            ListOuter.BackgroundTransparency = 1;
+            ListInner.BackgroundTransparency = 1;
+            Scrolling.ScrollBarImageTransparency = 1;
+
             Library.OpenedFrames[ListOuter] = true;
-            DropdownArrow.Rotation = 180;
+
+            Library:Tween(DropdownArrow, Library.Animation.Spring, { Rotation = 180 });
+            Library:Tween(ListOuter, Library.Animation.Normal, {
+                Size = UDim2.fromOffset(DropdownOuter.AbsoluteSize.X, targetY),
+                BackgroundTransparency = 0,
+            });
+            Library:Tween(ListInner, Library.Animation.Normal, { BackgroundTransparency = 0 });
+            Library:Tween(Scrolling, Library.Animation.Normal, { ScrollBarImageTransparency = 0 });
         end;
 
         function Dropdown:CloseDropdown()
-            ListOuter.Visible = false;
+            if not ListOuter.Visible then
+                return;
+            end;
+
             Library.OpenedFrames[ListOuter] = nil;
-            DropdownArrow.Rotation = 0;
+            Dropdown._CloseToken = (Dropdown._CloseToken or 0) + 1;
+            local Token = Dropdown._CloseToken;
+
+            Library:Tween(DropdownArrow, Library.Animation.Fast, { Rotation = 0 });
+            Library:Tween(ListInner, Library.Animation.Close, { BackgroundTransparency = 1 });
+            Library:Tween(Scrolling, Library.Animation.Close, { ScrollBarImageTransparency = 1 });
+            local CloseTween = Library:Tween(ListOuter, Library.Animation.Close, {
+                Size = UDim2.fromOffset(DropdownOuter.AbsoluteSize.X, 0),
+                BackgroundTransparency = 1,
+            });
+
+            CloseTween.Completed:Connect(function()
+                if Token == Dropdown._CloseToken then
+                    ListOuter.Visible = false;
+                end;
+            end);
         end;
 
         function Dropdown:OnChanged(Func)
@@ -3690,44 +3765,6 @@ function Library:CreateWindow(...)
 
         if Toggled then
             Outer.Visible = true;
-
-            task.spawn(function()
-                local State = InputService.MouseIconEnabled;
-
-                local Cursor = Drawing.new('Triangle');
-                Cursor.Thickness = 1;
-                Cursor.Filled = true;
-                Cursor.Visible = true;
-
-                local CursorOutline = Drawing.new('Triangle');
-                CursorOutline.Thickness = 1;
-                CursorOutline.Filled = false;
-                CursorOutline.Color = Color3.new(0, 0, 0);
-                CursorOutline.Visible = true;
-
-                while Toggled and ScreenGui.Parent do
-                    InputService.MouseIconEnabled = false;
-
-                    local mPos = InputService:GetMouseLocation();
-
-                    Cursor.Color = Library.AccentColor;
-
-                    Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
-                    Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
-                    Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
-
-                    CursorOutline.PointA = Cursor.PointA;
-                    CursorOutline.PointB = Cursor.PointB;
-                    CursorOutline.PointC = Cursor.PointC;
-
-                    RenderStepped:Wait();
-                end;
-
-                InputService.MouseIconEnabled = State;
-
-                Cursor:Remove();
-                CursorOutline:Remove();
-            end);
         end;
 
         for _, Desc in next, Outer:GetDescendants() do
