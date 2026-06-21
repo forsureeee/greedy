@@ -1,9 +1,3 @@
---[[
-    LinoriaLib-Rounded - Rounded corners fork of LinoriaLib
-    Original: https://github.com/violin-suzutsuki/LinoriaLib
-    Inter font: https://github.com/notpoiu/cobalt
-]]
-
 local InputService = game:GetService('UserInputService');
 local TextService = game:GetService('TextService');
 local CoreGui = game:GetService('CoreGui');
